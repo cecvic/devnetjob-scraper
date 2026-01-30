@@ -1,0 +1,22 @@
+{
+  "name": "devnetjobs-scraper",
+  "version": "1.0.0",
+  "description": "CLI scraper for DevNetJobsIndia.org",
+  "type": "module",
+  "scripts": {
+    "scrape": "tsx src/index.ts scrape",
+    "scrape:test": "tsx src/index.ts scrape --limit 5",
+    "import": "tsx src/import-to-neon.ts"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "pg": "^8.13.1",
+    "playwright": "^1.50.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
