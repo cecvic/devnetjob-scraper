@@ -13,7 +13,7 @@ program
 program
   .command('scrape')
   .description('Scrape all jobs from DevNetJobsIndia.org')
-  .option('-l, --limit <number>', 'Limit number of jobs to scrape', parseInt)
+  .option('-l, --limit <number>', 'Limit number of jobs to scrape', (val) => parseInt(val), 500)
   .option('-o, --output <path>', 'Output file path', 'output/jobs.json')
   .action(async (options) => {
     try {

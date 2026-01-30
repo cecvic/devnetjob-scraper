@@ -4,6 +4,8 @@ import type { Job, ScraperOutput } from './types.js';
 const BASE_URL = 'https://devnetjobsindia.org';
 const SEARCH_PAGE_URL = `${BASE_URL}/search_jobs.aspx`;
 
+const CONCURRENCY_LIMIT = 10;
+
 export async function scrapeJobs(limit?: number): Promise<ScraperOutput> {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
@@ -15,27 +17,33 @@ export async function scrapeJobs(limit?: number): Promise<ScraperOutput> {
     const startId = await findMostRecentJobId(page);
     console.log(`Most recent job ID: ${startId}`);
 
-    // Scan backwards from the most recent ID to find all valid jobs
-    const jobIds = await scanJobIds(page, startId, limit);
+    // Scan backwards from the most recent ID in parallel to find valid jobs
+    const jobIds = await scanJobIdsParallel(browser, startId, limit);
     console.log(`Found ${jobIds.length} valid job IDs`);
 
-    // Scrape details for each job
+    // Scrape details for each job in parallel with concurrency limit
+    console.log(`Scraping details for ${jobIds.length} jobs with concurrency ${CONCURRENCY_LIMIT}...`);
     const jobs: Job[] = [];
-    for (let i = 0; i < jobIds.length; i++) {
-      const jobId = jobIds[i];
-      console.log(`Scraping job ${i + 1}/${jobIds.length}: ${jobId}`);
 
-      try {
-        const job = await scrapeJobDetails(page, jobId);
-        jobs.push(job);
-      } catch (error) {
-        console.error(`Failed to scrape job ${jobId}:`, error);
-      }
+    // Process in chunks to maintain concurrency limit
+    for (let i = 0; i < jobIds.length; i += CONCURRENCY_LIMIT) {
+      const chunk = jobIds.slice(i, i + CONCURRENCY_LIMIT);
+      const promises = chunk.map(async (jobId, index) => {
+        const localPage = await context.newPage();
+        try {
+          const globalIdx = i + index + 1;
+          console.log(`[${globalIdx}/${jobIds.length}] Scraping: ${jobId}`);
+          return await scrapeJobDetails(localPage, jobId);
+        } catch (error) {
+          console.error(`Failed to scrape job ${jobId}:`, error);
+          return null;
+        } finally {
+          await localPage.close();
+        }
+      });
 
-      // Small delay
-      if (i < jobIds.length - 1) {
-        await page.waitForTimeout(300);
-      }
+      const results = await Promise.all(promises);
+      jobs.push(...results.filter((j): j is Job => j !== null));
     }
 
     return {
@@ -75,7 +83,6 @@ async function findMostRecentJobId(page: Page): Promise<number> {
 
       // Extract job ID from URL
       const url = page.url();
-      console.log(`  Current URL: ${url}`);
       const match = url.match(/Job_Id=(\d+)/);
       if (match) {
         return parseInt(match[1], 10);
@@ -91,55 +98,85 @@ async function findMostRecentJobId(page: Page): Promise<number> {
 
   // Fallback: use a known recent job ID
   console.log('  Using fallback job ID...');
-  return 285453; // Known recent job ID from earlier testing
+  return 285461; // Latest verified ID
 }
 
 async function isValidJobId(page: Page, jobId: number): Promise<boolean> {
   try {
     const url = `${BASE_URL}/JobDescription.aspx?Job_Id=${jobId}`;
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 10000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 7000 });
 
     // Check if page has a valid job title (h1 element with content)
-    const title = await page.locator('h1').first().innerText({ timeout: 3000 }).catch(() => '');
+    const title = await page.locator('h1').first().innerText({ timeout: 2000 }).catch(() => '');
     return title.length > 0 && !title.includes('Error') && !title.includes('Untitled');
   } catch {
     return false;
   }
 }
 
-async function scanJobIds(page: Page, startId: number, limit?: number): Promise<string[]> {
+async function scanJobIdsParallel(browser: any, startId: number, limit?: number): Promise<string[]> {
   const jobIds: string[] = [];
   let consecutiveInvalid = 0;
-  const maxConsecutiveInvalid = 100; // Stop after 100 consecutive invalid IDs
+  const maxConsecutiveInvalid = 100;
+  const scanConcurrency = 10;
 
-  console.log(`Scanning job IDs starting from ${startId}...`);
+  const context = await browser.newContext();
+  console.log(`Scanning job IDs in parallel (concurrency: ${scanConcurrency})...`);
 
-  // Scan downward from the most recent job
-  for (let id = startId; consecutiveInvalid < maxConsecutiveInvalid; id--) {
-    if (limit && jobIds.length >= limit) {
-      console.log(`Reached limit of ${limit} jobs`);
-      break;
+  let currentId = startId;
+  let keepScanning = true;
+
+  while (keepScanning) {
+    const chunkIds = Array.from({ length: scanConcurrency }, (_, i) => currentId - i);
+    const chunkResults = await Promise.all(
+      chunkIds.map(async (id) => {
+        const page = await context.newPage();
+        try {
+          const valid = await isValidJobId(page, id);
+          return { id, valid };
+        } finally {
+          await page.close();
+        }
+      })
+    );
+
+    // Sort and process results
+    chunkResults.sort((a, b) => b.id - a.id);
+
+    for (const res of chunkResults) {
+      if (limit && jobIds.length >= limit) {
+        keepScanning = false;
+        break;
+      }
+
+      if (res.valid) {
+        jobIds.push(res.id.toString());
+        consecutiveInvalid = 0;
+      } else {
+        consecutiveInvalid++;
+      }
+
+      if (consecutiveInvalid >= maxConsecutiveInvalid) {
+        keepScanning = false;
+        break;
+      }
     }
 
-    const isValid = await isValidJobId(page, id);
-    if (isValid) {
-      jobIds.push(id.toString());
-      consecutiveInvalid = 0;
+    if (!keepScanning) break;
+    currentId -= scanConcurrency;
 
-      if (jobIds.length % 10 === 0) {
-        console.log(`  Found ${jobIds.length} jobs so far (current ID: ${id})`);
-      }
-    } else {
-      consecutiveInvalid++;
+    if (jobIds.length > 0 && jobIds.length % 20 === 0) {
+      console.log(`  Found ${jobIds.length} valid jobs so far...`);
     }
   }
 
+  await context.close();
   return jobIds;
 }
 
-async function scrapeJobDetails(page: Page, jobId: string): Promise<Job> {
+async function scrapeJobDetails(page: Page, jobId: string): Promise<Job | null> {
   const url = `${BASE_URL}/JobDescription.aspx?Job_Id=${jobId}`;
-  await page.goto(url, { waitUntil: 'networkidle' });
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
   // Extract job title from h1
   const title = await page.locator('h1').first().innerText().catch(() => 'Unknown Title');
@@ -199,6 +236,15 @@ async function scrapeJobDetails(page: Page, jobId: string): Promise<Job> {
     description = descLines.join('\n').trim();
   } catch {
     description = '';
+  }
+
+  // Check for server errors or forbidden pages
+  if (title.includes('Server Error') ||
+    title.includes('403 - Forbidden') ||
+    organization.includes('Server Error') ||
+    description.includes('403 - Forbidden')) {
+    console.warn(`  [SKIP] ${jobId}: Detected server error or forbidden page`);
+    return null as any; // Cast to any because the loop filters nulls
   }
 
   return {

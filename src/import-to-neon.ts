@@ -1,17 +1,17 @@
 import { Pool } from 'pg';
 import { readFile } from 'fs/promises';
 import type { ScraperOutput } from './types.js';
+import * as dotenv from 'dotenv';
+
+// Load environment variables from .env file
+dotenv.config();
 
 // Load connection string from environment variable
 const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!DATABASE_URL) {
   console.error('Error: DATABASE_URL environment variable is required');
-  console.error('');
-  console.error('Set it with:');
-  console.error('  export DATABASE_URL="postgresql://user:pass@ep-xxx.neon.tech/dbname?sslmode=require"');
-  console.error('');
-  console.error('Get your connection string from: https://console.neon.tech');
+  console.error('Please ensure you have a .env file with DATABASE_URL or set it in your environment.');
   process.exit(1);
 }
 
@@ -24,7 +24,7 @@ async function createTableIfNotExists(): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query(`
-      CREATE TABLE IF NOT EXISTS jobs (
+      CREATE TABLE IF NOT EXISTS job_details (
         id SERIAL PRIMARY KEY,
         external_id VARCHAR(20) UNIQUE NOT NULL,
         title VARCHAR(500) NOT NULL,
@@ -41,10 +41,10 @@ async function createTableIfNotExists(): Promise<void> {
 
     // Create indexes if they don't exist
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_jobs_external_id ON jobs(external_id)
+      CREATE INDEX IF NOT EXISTS idx_job_details_external_id ON job_details(external_id)
     `);
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_jobs_deadline ON jobs(deadline)
+      CREATE INDEX IF NOT EXISTS idx_job_details_deadline ON job_details(deadline)
     `);
 
     console.log('Database table ready');
@@ -74,10 +74,18 @@ async function importJobs(inputFile: string): Promise<void> {
     let errors = 0;
 
     for (const job of data.jobs) {
+      // Skip jobs with server errors
+      if (job.title.includes('Server Error') ||
+        job.organization?.includes('Server Error') ||
+        job.description?.includes('403 - Forbidden')) {
+        console.log(`  [SKIP] ${job.externalId}: Detected server error data`);
+        continue;
+      }
+
       try {
         // Use upsert to handle duplicates
         const result = await client.query(`
-          INSERT INTO jobs (external_id, title, organization, location, deadline, sectors, description, original_url)
+          INSERT INTO job_details (external_id, title, organization, location, deadline, sectors, description, original_url)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
           ON CONFLICT (external_id)
           DO UPDATE SET

@@ -89,8 +89,8 @@ npm install -D @types/pg
 Connect to your NeonDB and run this SQL:
 
 ```sql
--- Create jobs table
-CREATE TABLE jobs (
+-- Create job_details table
+CREATE TABLE job_details (
   id SERIAL PRIMARY KEY,
   external_id VARCHAR(20) UNIQUE NOT NULL,
   title VARCHAR(500) NOT NULL,
@@ -105,8 +105,8 @@ CREATE TABLE jobs (
 );
 
 -- Create index for faster lookups
-CREATE INDEX idx_jobs_external_id ON jobs(external_id);
-CREATE INDEX idx_jobs_deadline ON jobs(deadline);
+CREATE INDEX idx_job_details_external_id ON job_details(external_id);
+CREATE INDEX idx_job_details_deadline ON job_details(deadline);
 
 -- Optional: Create a function to update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
