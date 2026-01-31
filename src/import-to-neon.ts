@@ -53,7 +53,7 @@ async function createTableIfNotExists(): Promise<void> {
   }
 }
 
-async function importJobs(inputFile: string): Promise<void> {
+async function importJobs(inputFile: string, shouldClosePool: boolean = true): Promise<void> {
   console.log(`Reading jobs from ${inputFile}...`);
 
   const content = await readFile(inputFile, 'utf-8');
@@ -131,14 +131,20 @@ async function importJobs(inputFile: string): Promise<void> {
 
   } finally {
     client.release();
-    await pool.end();
+    if (shouldClosePool) {
+      await pool.end();
+    }
   }
 }
 
-// Get input file from command line or use default
-const inputFile = process.argv[2] || 'output/jobs.json';
+// Export for use in other files
+export { importJobs };
 
-importJobs(inputFile).catch((error) => {
-  console.error('Import failed:', error);
-  process.exit(1);
-});
+// Only run if called directly from command line
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const inputFile = process.argv[2] || 'output/jobs.json';
+  importJobs(inputFile).catch((error) => {
+    console.error('Import failed:', error);
+    process.exit(1);
+  });
+}

@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { scrapeJobs } from './scraper.js';
+import { importJobs } from './import-to-neon.js';
 import { writeFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 
@@ -34,6 +35,13 @@ program
       console.log(`\nScraping complete!`);
       console.log(`Total jobs: ${result.totalJobs}`);
       console.log(`Output saved to: ${options.output}`);
+
+      // Auto-import to database
+      console.log('\nStarting database import...');
+      await importJobs(options.output, false); // false = don't close pool yet, though currently importJobs closes it. 
+      // Note: importJobs in its current form closes the pool at the end. 
+      // We might need to adjust import-to-neon.ts if we want to be cleaner, 
+      // but calling it as is should work if it's the last thing we do.
     } catch (error) {
       console.error('Scraping failed:', error);
       process.exit(1);
