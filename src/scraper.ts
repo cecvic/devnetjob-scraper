@@ -79,7 +79,13 @@ async function findMostRecentJobId(page: Page): Promise<number> {
       }
 
       await firstJobLink.click({ timeout: 15000 });
-      await page.waitForLoadState('networkidle', { timeout: 20000 });
+      // Wait for navigation across postback which goes through PublicSearchView.aspx
+      try {
+        await page.waitForSelector('h1', { timeout: 15000 });
+      } catch {
+        // Fallback waiting for page load state just in case
+        await page.waitForLoadState('networkidle', { timeout: 10000 });
+      }
 
       // Extract job ID from URL
       const url = page.url();
@@ -98,16 +104,16 @@ async function findMostRecentJobId(page: Page): Promise<number> {
 
   // Fallback: use a known recent job ID
   console.log('  Using fallback job ID...');
-  return 285461; // Latest verified ID
+  return 288312; // Latest verified ID based on recent diagnostic
 }
 
 async function isValidJobId(page: Page, jobId: number): Promise<boolean> {
   try {
     const url = `${BASE_URL}/JobDescription.aspx?Job_Id=${jobId}`;
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 7000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
 
     // Check if page has a valid job title (h1 element with content)
-    const title = await page.locator('h1').first().innerText({ timeout: 2000 }).catch(() => '');
+    const title = await page.locator('h1').first().innerText({ timeout: 5000 }).catch(() => '');
     return title.length > 0 && !title.includes('Error') && !title.includes('Untitled');
   } catch {
     return false;
